@@ -8,11 +8,10 @@ Author URI: http://blog.calevans.com
 Plugin URI: https://www.getpantheon.com/blog/tracing-wordpress-actions
 */
 
-function calevans_action_trace()
-{
+function calevans_action_trace() {
 	/*
 	 * Even though this plugin should never EVER be used in production, this is 
-	 * a safety net. You have to actually set the showTrace=1 flag in the query 
+	 * a safety net. You have to actually set the showDebugTrace=1 flag in the query 
 	 * string for it to operate. If you don't it will still slow down your 
 	 * site, but it won't do anything.
 	 */
@@ -21,24 +20,22 @@ function calevans_action_trace()
 	}
 
 	/*
-	 * There are 2 other flags you can set to control what is output
+	 * There are 3 other flags you can set to control what is output and how.
 	 */
-	$showArgs = ( isset( $_GET['showDebugArgs'] ) ? (bool) $_GET['showDebugArgs'] : false );
-	$showTime = ( isset( $_GET['showDebugTime'] ) ? (bool) $_GET['showDebugTime'] : false );
-
+	$show_args   = ( isset( $_GET['showDebugArgs'] ) ? (bool) $_GET['showDebugArgs'] : false );
+	$show_time   = ( isset( $_GET['showDebugTime'] ) ? (bool) $_GET['showDebugTime'] : false );
+	$log_to_file = ( isset( $_GET['logToFile'] ) ? (bool) $_GET['logToFile'] : false );
 
 	/*
 	 * This is the main array we are using to hold the list of actions
 	 */
 	static $actions = [];
 
-
-
 	/*
 	 * Some actions are not going to be of interest to you. Add them into this 
 	 * array to exclude them. Remove the two default if you want to see them.
 	 */
-	$excludeActions = ['gettext', 'gettext_with_context'];
+	$excludeActions = ['gettext', 'gettext_with_context', 'set_url_scheme','sanitize_key','pre_option_siteurl','option_siteurl','clean_url','attribute_escape','alloptions','admin_url','wp_parse_str'];
 	$thisAction     = current_filter();
 	$thisArguments  = func_get_args();
 
@@ -48,52 +45,82 @@ function calevans_action_trace()
 					  'arguments' => print_r( $thisArguments, true )];
 	}
 
-
 	/*
 	 * Shutdown is the last action, process the list.
 	 */ 
 	if ( 'shutdown' === $thisAction ) {
-		calevans_format_debug_output( $actions, $showArgs, $showTime );
+		calevans_format_debug_output( $actions, $show_args, $show_time, $log_to_file );
 	}
 
 	return;
 }
 
 
-function calevans_format_debug_output( $actions = [], $showArgs = false, $showTime = false ) {
+function calevans_format_debug_output( $actions = [], $show_args = false, $show_time = false, $log_to_file ) {
 	/*
 	 * Let's do a little formatting here.
 	 * The class "debug" is so you can control the look and feel
 	 */
-	echo '<pre class="debug">';
+	$output = '';
 
-	foreach( $actions as $thisAction ) {
-		echo "Action Name : ";
+	foreach ( $actions as $thisAction ) {
+		$output  .= "Action Name: ";
 
 		/*
 		 * if you want the timings, let's make sure everything is padded out properly.
 		 */
-		if ( $showTime ) {
+		if ( $show_time ) {
 			$timeParts = explode('.', $thisAction['time'] );
-			echo '(' . $timeParts[0] . '.' .  str_pad( $timeParts[1], 4, '0' ) . ') ';
+			$output  .= '(' . $timeParts[0] . '.' .  str_pad( $timeParts[1], 4, '0' ) . ') ';
 		}
 
 
-		echo $thisAction['action'] . PHP_EOL;
+		$output  .= $thisAction['action'] . PHP_EOL;
 
 		/*
 		 * If you've requested the arguments, let's display them.
 		 */
-		if ( $showArgs && count( $thisAction['arguments'] )>0) {
-			echo "Args:" . PHP_EOL . print_r( $thisAction['arguments'], true );
-			echo PHP_EOL;
+		if ( $show_args && count( $thisAction['arguments'] ) > 0 ) {
+			$output  .= "Args:" . PHP_EOL . print_r( $thisAction['arguments'], true );
+			$output  .= PHP_EOL;
 		}
 	}
 
-	echo '</pre>';
+	if ( $log_to_file ) {
+		global $post;
+		$upload = wp_upload_dir();
+		$upload_dir = $upload['basedir'];
+		$upload_dir = $upload_dir . '/wp-action-trace';
+		if ( ! is_dir( $upload_dir ) ) {
+			mkdir( $upload_dir, 0700 );
+		}
+
+		$filename = '';
+		if ( ! empty( $post->post_name) ) {
+			$filename .= $post->post_name . '_';
+		}
+		$filename .= date( 'Y-m-d-h-i-s' ) . '.log';
+		$filepath = trailingslashit( $upload_dir ) . $filename;
+
+		if ( !$fp = @fopen( $filepath, "wb" ) ) {
+			error_log( "[WP-action-trace] Cannot open file ($filepath)" );
+			exit;
+		}
+		if ( false === fwrite( $fp, $output ) ) {
+			error_log( "[WP-action-trace] Cannot write to file ($filepath)" );
+			exit;
+		}
+		if ( ! fclose( $fp ) ) {
+			error_log( "[WP-action-trace] Cannot close file ($filepath)" );
+			exit;
+		}
+	} else {
+		echo '<pre class="debug">' . $output . '</pre>';
+	}
 	
 	return;
 }
+
 
 /*
  * Hook it into WordPress.
